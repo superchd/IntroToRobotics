@@ -1,0 +1,451 @@
+#include <Wire.h>
+#include <Adafruit_PWMServoDriver.h>
+
+Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver(0x40);
+
+// ============================================================
+// PCA9685 SETTINGS
+// ============================================================
+
+#define SERVOMIN 150
+#define SERVOMAX 600
+
+// ONLY THESE 3 SERVOS ARE USED FOR PICK/PLACE
+#define BASE      0
+#define ARM       1
+#define GRIPPER   5
+
+
+// ============================================================
+// CHANGE THESE VALUES DURING TRIAL AND ERROR
+// ============================================================
+//
+// These are PCA9685 pulse values, NOT servo angles.
+//
+// Find values that physically give you the positions you want.
+// ============================================================
+
+// ---------- GRIPPER ----------
+#define GRIP_OPEN   150
+#define GRIP_CLOSE  500
+
+
+// ---------- PICKUP POSITION ----------
+#define PICK_BASE   300
+#define PICK_ARM    400
+
+
+// ---------- LIFT POSITION ----------
+#define LIFT_BASE   300
+#define LIFT_ARM    300
+
+
+// ---------- BUILD LOCATION ----------
+#define BUILD_BASE  450
+#define BUILD_ARM   300
+
+
+// ---------- LOWER TO STACK ----------
+#define DROP_ARM    400
+
+
+// ============================================================
+// BASIC SERVO CONTROL
+// ============================================================
+
+void moveServo(uint8_t channel, int pulse) {
+
+  pwm.setPWM(channel, 0, pulse);
+
+  Serial.print("CH");
+  Serial.print(channel);
+  Serial.print(" -> ");
+  Serial.println(pulse);
+}
+
+
+// Move the three task servos.
+// They are moved SEQUENTIALLY so we don't intentionally
+// create a simultaneous current spike.
+// ============================================================
+
+void moveArm(int basePulse, int armPulse, int gripperPulse) {
+
+  moveServo(BASE, basePulse);
+  delay(300);
+
+  moveServo(ARM, armPulse);
+  delay(300);
+
+  moveServo(GRIPPER, gripperPulse);
+  delay(500);
+}
+
+
+// ============================================================
+// GRIPPER
+// ============================================================
+
+void openGripper() {
+
+  Serial.println("Opening gripper...");
+
+  moveServo(GRIPPER, GRIP_OPEN);
+
+  delay(700);
+}
+
+
+void closeGripper() {
+
+  Serial.println("Closing gripper...");
+
+  moveServo(GRIPPER, GRIP_CLOSE);
+
+  delay(700);
+}
+
+
+// ============================================================
+// MOVE TO PICKUP POSITION
+// ============================================================
+
+void moveToPickup() {
+
+  Serial.println();
+  Serial.println("Moving to PICKUP position...");
+
+  // Move base first
+  moveServo(BASE, PICK_BASE);
+  delay(500);
+
+  // Move arm
+  moveServo(ARM, PICK_ARM);
+  delay(500);
+
+  // Open gripper
+  openGripper();
+
+  delay(500);
+}
+
+
+// ============================================================
+// PICK UP OBJECT
+// ============================================================
+
+void pickObject() {
+
+  Serial.println();
+  Serial.println("PICKING UP OBJECT");
+
+  // Make sure gripper is open
+  openGripper();
+
+  // Lower arm to object
+  Serial.println("Lowering...");
+  moveServo(ARM, DROP_ARM);
+  delay(700);
+
+  // Close gripper
+  closeGripper();
+
+  delay(700);
+
+  // Lift object
+  Serial.println("Lifting object...");
+
+  moveServo(ARM, LIFT_ARM);
+
+  delay(1000);
+}
+
+
+// ============================================================
+// MOVE TO BUILD LOCATION
+// ============================================================
+
+void moveToBuild() {
+
+  Serial.println();
+  Serial.println("Moving to BUILD LOCATION...");
+
+  // Rotate base
+  moveServo(BASE, BUILD_BASE);
+  delay(700);
+
+  // Keep arm lifted
+  moveServo(ARM, LIFT_ARM);
+  delay(700);
+}
+
+
+// ============================================================
+// PLACE OBJECT
+// ============================================================
+
+void placeObject() {
+
+  Serial.println();
+  Serial.println("PLACING OBJECT");
+
+  // Lower arm
+  Serial.println("Lowering object...");
+
+  moveServo(ARM, DROP_ARM);
+  delay(700);
+
+  // Release
+  Serial.println("Releasing object...");
+
+  openGripper();
+
+  delay(700);
+
+  // Raise arm again
+  Serial.println("Moving arm away...");
+
+  moveServo(ARM, LIFT_ARM);
+
+  delay(700);
+}
+
+
+// ============================================================
+// RETURN TO PICKUP
+// ============================================================
+
+void returnToPickup() {
+
+  Serial.println();
+  Serial.println("Returning to pickup location...");
+
+  moveServo(ARM, LIFT_ARM);
+  delay(500);
+
+  moveServo(BASE, PICK_BASE);
+  delay(700);
+
+  moveServo(ARM, PICK_ARM);
+  delay(700);
+
+  openGripper();
+
+  delay(500);
+}
+
+
+// ============================================================
+// PICK + PLACE ONE BLOCK
+// ============================================================
+
+void pickAndPlace() {
+
+  moveToPickup();
+
+  pickObject();
+
+  moveToBuild();
+
+  placeObject();
+}
+
+
+// ============================================================
+// COMPLETE DEMO
+// ============================================================
+
+void runDemo() {
+
+  Serial.println();
+  Serial.println("====================================");
+  Serial.println("       ROBOT DEMO 2 STARTING");
+  Serial.println("====================================");
+
+
+  // ==========================================================
+  // BLOCK 1
+  // ==========================================================
+
+  Serial.println();
+  Serial.println("========== BLOCK 1 ==========");
+
+  pickAndPlace();
+
+  delay(1000);
+
+
+  // ==========================================================
+  // BLOCK 2
+  // ==========================================================
+
+  Serial.println();
+  Serial.println("========== BLOCK 2 ==========");
+
+  returnToPickup();
+
+  pickObject();
+
+  moveToBuild();
+
+  // For block 2, lower it onto block 1
+  placeObject();
+
+  delay(1000);
+
+
+  // ==========================================================
+  // BLOCK 3
+  // ==========================================================
+
+  Serial.println();
+  Serial.println("========== BLOCK 3 ==========");
+
+  returnToPickup();
+
+  pickObject();
+
+  moveToBuild();
+
+  // Place block 3 onto block 2
+  placeObject();
+
+
+  Serial.println();
+  Serial.println("====================================");
+  Serial.println("       DEMO 2 COMPLETE!");
+  Serial.println("====================================");
+}
+
+
+// ============================================================
+// SETUP
+// ============================================================
+
+void setup() {
+
+  Serial.begin(9600);
+
+  pwm.begin();
+
+  pwm.setPWMFreq(50);
+
+  delay(500);
+
+  Serial.println();
+  Serial.println("====================================");
+  Serial.println("      3-SERVO PICK & PLACE");
+  Serial.println("====================================");
+
+  Serial.println();
+  Serial.println("Commands:");
+  Serial.println();
+  Serial.println("P = Run full pick/place demo");
+  Serial.println("O = Open gripper");
+  Serial.println("C = Close gripper");
+  Serial.println("H = Go to pickup position");
+  Serial.println("B = Go to build position");
+  Serial.println();
+  Serial.println("Manual:");
+  Serial.println("M <channel> <pulse>");
+  Serial.println("Example: M 0 350");
+  Serial.println();
+
+  // Start with gripper open
+  openGripper();
+}
+
+
+// ============================================================
+// LOOP
+// ============================================================
+
+void loop() {
+
+  if (Serial.available()) {
+
+    char command = Serial.read();
+
+
+    // --------------------------------------------------------
+    // FULL DEMO
+    // --------------------------------------------------------
+
+    if (command == 'P' || command == 'p') {
+
+      runDemo();
+
+    }
+
+
+    // --------------------------------------------------------
+    // OPEN GRIPPER
+    // --------------------------------------------------------
+
+    else if (command == 'O' || command == 'o') {
+
+      openGripper();
+
+    }
+
+
+    // --------------------------------------------------------
+    // CLOSE GRIPPER
+    // --------------------------------------------------------
+
+    else if (command == 'C' || command == 'c') {
+
+      closeGripper();
+
+    }
+
+
+    // --------------------------------------------------------
+    // PICKUP POSITION
+    // --------------------------------------------------------
+
+    else if (command == 'H' || command == 'h') {
+
+      moveToPickup();
+
+    }
+
+
+    // --------------------------------------------------------
+    // BUILD POSITION
+    // --------------------------------------------------------
+
+    else if (command == 'B' || command == 'b') {
+
+      moveToBuild();
+
+    }
+
+
+    // --------------------------------------------------------
+    // MANUAL PULSE CONTROL
+    // --------------------------------------------------------
+
+    else if (command == 'M' || command == 'm') {
+
+      int channel = Serial.parseInt();
+      int pulse = Serial.parseInt();
+
+      while (Serial.available()) {
+        Serial.read();
+      }
+
+      if (channel >= 0 && channel <= 15 &&
+          pulse >= 100 && pulse <= 650) {
+
+        moveServo(channel, pulse);
+
+      } else {
+
+        Serial.println(
+          "Invalid. Use: M <channel 0-15> <pulse 100-650>"
+        );
+      }
+    }
+  }
+}
