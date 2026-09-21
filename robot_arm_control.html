@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Robot arm control</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper: #E4E8EC;
+    --panel: #F6F7F8;
+    --ink: #18212B;
+    --muted: #5E6873;
+    --line: #C7CED6;
+    --pcb: #1E4E7E;
+    --pcb-dark: #163B60;
+    --signal: #E8891C;
+    --signal-soft: #FCEBD6;
+    --power: #C23A2B;
+    --ground: #5B3A29;
+    --track: #D3D9DF;
+    --ui: "Barlow", "Segoe UI", system-ui, sans-serif;
+    --cond: "Barlow Condensed", "Arial Narrow", "Segoe UI", sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { background: var(--paper); color: var(--ink); font-family: var(--ui); font-size: 15px; line-height: 1.45; }
+  button { font: inherit; cursor: pointer; }
+  button:disabled { cursor: not-allowed; opacity: .45; }
+  :focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
+
+  header { background: var(--pcb); color: #fff; display: flex; align-items: center; flex-wrap: wrap; gap: 12px 20px; padding: 14px 24px; }
+  header h1 { font-family: var(--cond); font-weight: 600; font-size: 28px; margin: 0; }
+  .status { display: flex; align-items: center; gap: 8px; font-size: 14px; margin-left: auto; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: #8A96A3; flex: none; }
+  .dot.on { background: #5BD08A; } .dot.busy { background: var(--signal); } .dot.err { background: #FF7A6B; }
+
+  .btn { background: var(--pcb); color: #fff; border: 0; border-radius: 4px; padding: 8px 14px; font-weight: 500; }
+  .btn:hover:not(:disabled) { background: var(--pcb-dark); }
+  .btn.outline { background: #fff; color: var(--pcb); box-shadow: inset 0 0 0 1px var(--line); }
+  .btn.outline:hover:not(:disabled) { background: #EDF1F5; }
+  .btn.go { background: var(--signal); color: var(--ink); font-weight: 600; }
+  .btn.go:hover:not(:disabled) { background: #D57812; }
+  .btn.stop { background: var(--power); }
+  .btn.stop:hover:not(:disabled) { background: #A32E21; }
+  .btn.sm { padding: 4px 10px; font-size: 14px; }
+  header .btn { background: #fff; color: var(--pcb); font-weight: 600; }
+  header .btn:hover { background: #E6EEF6; }
+
+  main { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); gap: 24px; padding: 24px; max-width: 1360px; margin: 0 auto; }
+  @media (max-width: 960px) { main { grid-template-columns: 1fr; padding: 16px; } }
+  .stack { display: grid; gap: 24px; align-content: start; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 18px 20px; }
+  h2 { font-family: var(--cond); font-weight: 600; font-size: 21px; margin: 0 0 4px; }
+  .hint { color: var(--muted); font-size: 14px; margin: 0 0 12px; max-width: 70ch; }
+
+  .steps { display: flex; align-items: center; gap: 6px; margin: 4px 0 8px; font-size: 14px; color: var(--muted); }
+  .steps button { border: 1px solid var(--line); background: #fff; color: var(--ink); border-radius: 4px; min-width: 40px; padding: 4px 8px; font-variant-numeric: tabular-nums; }
+  .steps button[aria-pressed="true"] { background: var(--pcb); color: #fff; border-color: var(--pcb); }
+
+  /* Channel rows styled like a servo lead: ground / power / signal */
+  .ch { position: relative; padding: 14px 0 14px 22px; border-top: 1px solid var(--line); }
+  .ch:first-child { border-top: 0; }
+  .lead { position: absolute; left: 0; top: 16px; bottom: 16px; display: flex; gap: 2px; }
+  .lead span { width: 3px; border-radius: 2px; }
+  .lead span:nth-child(1) { background: var(--ground); }
+  .lead span:nth-child(2) { background: var(--power); }
+  .lead span:nth-child(3) { background: var(--signal); }
+  .ch-head { display: flex; align-items: baseline; gap: 10px; }
+  .ch-no { font-family: var(--cond); font-size: 15px; color: var(--muted); width: 34px; }
+  .ch-name { font-weight: 500; flex: 1; }
+  .ch-val { font-family: var(--cond); font-weight: 600; font-size: 36px; line-height: 1; font-variant-numeric: tabular-nums; }
+  .ch-deg { color: var(--muted); font-size: 13px; width: 50px; text-align: right; font-variant-numeric: tabular-nums; }
+  .ch-ctrl { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+  .jog { width: 42px; height: 36px; border: 1px solid var(--line); background: #fff; color: var(--ink); border-radius: 4px; font-size: 22px; line-height: 1; touch-action: manipulation; user-select: none; }
+  .jog:active { background: #EDF1F5; }
+  input[type=range] { --pct: 50%; flex: 1; appearance: none; -webkit-appearance: none; height: 36px; background: transparent; margin: 0; }
+  input[type=range]::-webkit-slider-runnable-track { height: 8px; border-radius: 4px; background: linear-gradient(to right, var(--signal) var(--pct), var(--track) var(--pct)); }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 28px; margin-top: -10px; border-radius: 3px; background: var(--pcb); border: 2px solid #fff; box-shadow: 0 0 0 1px var(--pcb); }
+  input[type=range]::-moz-range-track { height: 8px; border-radius: 4px; background: var(--track); }
+  input[type=range]::-moz-range-progress { height: 8px; border-radius: 4px; background: var(--signal); }
+  input[type=range]::-moz-range-thumb { width: 16px; height: 26px; border-radius: 3px; background: var(--pcb); border: 2px solid #fff; }
+
+  /* Sequence */
+  .group { border: 1px solid var(--line); border-radius: 6px; background: #fff; margin-top: 14px; }
+  .group-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px; background: #EAEFF3; border-bottom: 1px solid var(--line); border-radius: 6px 6px 0 0; }
+  .group.block .group-head { box-shadow: inset 4px 0 0 var(--signal); }
+  .group-head h3 { font-family: var(--cond); font-weight: 600; font-size: 20px; margin: 0; }
+  .group-head .count { color: var(--muted); font-size: 13px; }
+  .group-head .spacer { flex: 1; }
+  .group-hint { color: var(--muted); font-size: 13px; padding: 6px 14px 0; margin: 0; }
+  .group ol { list-style: none; margin: 0; padding: 4px 6px 6px; }
+  .empty-g { padding: 10px 14px 14px; color: var(--muted); font-size: 14px; font-style: italic; }
+  .meta select { font: inherit; font-size: 12.5px; border: 1px solid var(--line); border-radius: 4px; background: #fff; color: var(--ink); padding: 1px 4px; }
+  .run + .run { margin-top: 10px; }
+  .run .label { align-self: center; color: var(--muted); font-size: 14px; margin-right: 4px; }
+  .step { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; gap: 4px 10px; padding: 10px 8px; border-top: 1px solid var(--line); border-radius: 4px; cursor: pointer; }
+  .step:first-child { border-top: 0; }
+  .step.sel { background: #E3ECF5; box-shadow: inset 3px 0 0 var(--pcb); }
+  .step.playing { background: var(--signal-soft); box-shadow: inset 3px 0 0 var(--signal); }
+  .idx { font-family: var(--cond); font-weight: 600; font-size: 22px; line-height: 1.2; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .step input.name { width: 100%; border: 1px solid transparent; background: transparent; font: inherit; font-weight: 500; padding: 2px 4px; border-radius: 3px; color: var(--ink); }
+  .step input.name:hover, .step input.name:focus { border-color: var(--line); background: #fff; }
+  .meta { grid-column: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); padding-left: 4px; }
+  .tag { font-size: 12px; font-weight: 600; padding: 1px 7px; border-radius: 3px; background: #DCE3EA; color: var(--pcb); }
+  .tag.grip { background: #EFE4DD; color: var(--ground); }
+  .vals { font-family: var(--mono); font-size: 12.5px; }
+  .speed { display: inline-flex; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
+  .speed button { border: 0; background: #fff; color: var(--muted); padding: 1px 8px; font-size: 12.5px; }
+  .speed button[aria-pressed="true"] { background: var(--pcb); color: #fff; }
+  .row-actions { grid-column: 3; grid-row: 1 / span 2; display: flex; flex-wrap: wrap; gap: 4px; align-content: start; justify-content: flex-end; max-width: 200px; }
+  .icon { width: 30px; height: 28px; border: 1px solid var(--line); background: #fff; border-radius: 4px; color: var(--ink); padding: 0; }
+  .icon.del { color: var(--power); }
+
+  .run { display: flex; flex-wrap: wrap; gap: 8px; }
+  .run .btn { padding: 11px 16px; }
+
+  textarea { width: 100%; min-height: 220px; font: 12.5px/1.5 var(--mono); color: var(--ink); background: #fff; border: 1px solid var(--line); border-radius: 4px; padding: 10px; resize: vertical; }
+  .row { display: flex; gap: 8px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
+  .copied { color: #2F8A55; font-size: 14px; }
+  pre#log { margin: 0; height: 160px; overflow: auto; background: #fff; border: 1px solid var(--line); border-radius: 4px; padding: 8px 10px; font: 12px/1.5 var(--mono); color: var(--muted); white-space: pre-wrap; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Robot arm control</h1>
+  <button class="btn" id="connectBtn">Connect Arduino</button>
+  <div class="status" role="status" aria-live="polite">
+    <span class="dot" id="dot"></span>
+    <span id="statusText">Not connected</span>
+  </div>
+</header>
+
+<main>
+  <div class="stack">
+    <section>
+      <h2>Joints</h2>
+      <p class="hint">Drag a slider or hold + / − to jog. Values are PCA9685 pulses (100–650).</p>
+      <div class="steps" role="group" aria-label="Jog step">
+        <span>Jog step</span>
+        <button data-step="1" aria-pressed="false">1</button>
+        <button data-step="5" aria-pressed="true">5</button>
+        <button data-step="10" aria-pressed="false">10</button>
+        <button data-step="25" aria-pressed="false">25</button>
+      </div>
+      <div id="channels"></div>
+    </section>
+
+    <section>
+      <h2>Serial log</h2>
+      <pre id="log" aria-live="off"></pre>
+    </section>
+  </div>
+
+  <div class="stack">
+    <section>
+      <h2>Sequence</h2>
+      <p class="hint">Record each key moment in the section it belongs to. Arm steps never touch the gripper; gripper steps only move the gripper. A new step goes right after the highlighted step, or at the end of that section.</p>
+      <div id="groups"></div>
+      <div class="row"><button class="btn outline" id="clearSeq">Clear all</button></div>
+    </section>
+
+    <section>
+      <h2>Play</h2>
+      <p class="hint">Preview plays the list above straight from this page. Run on Arduino plays the version you pasted into the sketch and uploaded.</p>
+      <div class="run">
+        <button class="btn outline" id="previewBtn">Preview all</button>
+        <button class="btn go" id="runBtn">Run whole tower on Arduino</button>
+        <button class="btn stop" id="stopBtn">Stop</button>
+      </div>
+      <div class="run">
+        <span class="label">Run one block on Arduino</span>
+        <button class="btn outline" data-run="1">Block 1</button>
+        <button class="btn outline" data-run="2">Block 2</button>
+        <button class="btn outline" data-run="3">Block 3</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>Code for the sketch</h2>
+      <p class="hint">In tower_sequence.ino, replace the lines between <code>SEQUENCE START</code> and <code>SEQUENCE END</code> with this, then upload again.</p>
+      <textarea id="code" readonly spellcheck="false" aria-label="Generated sequence code"></textarea>
+      <div class="row">
+        <button class="btn" id="copyBtn">Copy code</button>
+        <span class="copied" id="copied" hidden>Copied</span>
+      </div>
+    </section>
+  </div>
+</main>
+
+<script>
+(() => {
+  // ---------------- Config ----------------
+  const JOINTS = ["Base", "Shoulder", "Elbow", "Wrist pitch", "Wrist rotate", "Gripper"];
+  const MIN = 100, MAX = 650;
+  const SPEED = { normal: 15, slow: 40 };
+  const pulses = [375, 375, 375, 375, 375, 150];
+  const dragging = [false, false, false, false, false, false];
+  let step = 5;
+
+  const $ = (id) => document.getElementById(id);
+  const clamp = (v) => Math.max(MIN, Math.min(MAX, Math.round(v)));
+
+  // ---------------- Storage ----------------
+  const SEQ_KEY = "robot-arm-sequence-v1";
+  let seq = [];
+  try { seq = JSON.parse(localStorage.getItem(SEQ_KEY)) || []; } catch (e) { seq = []; }
+  const persist = () => { try { localStorage.setItem(SEQ_KEY, JSON.stringify(seq)); } catch (e) {} };
+  const GROUPS = [
+    { id: 0, title: "Start", hint: "Home pose and open gripper." },
+    { id: 1, title: "Block 1", hint: "Pick up block 1 and set it on the build spot.", block: true },
+    { id: 2, title: "Block 2", hint: "Pick up block 2 and stack it on block 1.", block: true },
+    { id: 3, title: "Block 3", hint: "Pick up block 3 and stack it on block 2.", block: true },
+    { id: 4, title: "Finish", hint: "Back to home." },
+  ];
+  seq.forEach(x => { if (x.group === undefined) x.group = 0; });
+  function sortSeq() {
+    seq = seq.map((x, i) => ({ x, i }))
+      .sort((a, b) => a.x.group - b.x.group || a.i - b.i)
+      .map(o => o.x);
+  }
+  sortSeq();
+  let selectedStep = null;
+  let playingStep = null;
+
+  // ---------------- Log / status ----------------
+  const logEl = $("log");
+  function log(line) {
+    logEl.textContent += line + "\n";
+    const lines = logEl.textContent.split("\n");
+    if (lines.length > 300) logEl.textContent = lines.slice(-300).join("\n");
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+  function setStatus(text, state) {
+    $("statusText").textContent = text;
+    $("dot").className = "dot" + (state ? " " + state : "");
+  }
+
+  // ---------------- Joint UI ----------------
+  const ui = [];
+  function setPulseUI(i, v) {
+    pulses[i] = v;
+    const u = ui[i];
+    u.slider.value = v;
+    u.val.textContent = v;
+    u.deg.textContent = "≈ " + Math.round((v - 150) * 180 / 450) + "°";
+    u.slider.style.setProperty("--pct", ((v - MIN) / (MAX - MIN) * 100) + "%");
+  }
+
+  JOINTS.forEach((name, i) => {
+    const row = document.createElement("div");
+    row.className = "ch";
+    row.innerHTML = `
+      <div class="lead" aria-hidden="true"><span></span><span></span><span></span></div>
+      <div class="ch-head">
+        <span class="ch-no">CH${i}</span>
+        <span class="ch-name">${name}</span>
+        <span class="ch-val"></span>
+        <span class="ch-deg"></span>
+      </div>
+      <div class="ch-ctrl">
+        <button class="jog" data-dir="-1" aria-label="Decrease ${name}">−</button>
+        <input type="range" min="${MIN}" max="${MAX}" step="1" aria-label="${name} pulse">
+        <button class="jog" data-dir="1" aria-label="Increase ${name}">+</button>
+      </div>`;
+    $("channels").appendChild(row);
+    const slider = row.querySelector("input");
+    ui[i] = { slider, val: row.querySelector(".ch-val"), deg: row.querySelector(".ch-deg") };
+
+    slider.addEventListener("input", () => { setPulseUI(i, +slider.value); sendJoint(i); });
+    slider.addEventListener("pointerdown", () => { dragging[i] = true; });
+    ["pointerup", "pointercancel", "change", "blur"].forEach(ev =>
+      slider.addEventListener(ev, () => { dragging[i] = false; }));
+
+    row.querySelectorAll(".jog").forEach(btn => {
+      const dir = +btn.dataset.dir;
+      let delayTimer = null, repeatTimer = null;
+      const once = () => { setPulseUI(i, clamp(pulses[i] + dir * step)); sendJoint(i); };
+      const stop = () => { clearTimeout(delayTimer); clearInterval(repeatTimer); };
+      btn.addEventListener("pointerdown", (e) => {
+        if (e.button !== 0) return;
+        once();
+        delayTimer = setTimeout(() => { repeatTimer = setInterval(once, 120); }, 350);
+      });
+      ["pointerup", "pointerleave", "pointercancel"].forEach(ev => btn.addEventListener(ev, stop));
+      btn.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); once(); }
+      });
+    });
+    setPulseUI(i, pulses[i]);
+  });
+
+  document.querySelectorAll(".steps button").forEach(b => {
+    b.addEventListener("click", () => {
+      step = +b.dataset.step;
+      document.querySelectorAll(".steps button").forEach(x =>
+        x.setAttribute("aria-pressed", x === b ? "true" : "false"));
+    });
+  });
+
+  // ---------------- Serial ----------------
+  let port = null, writer = null, reader = null;
+  let readableClosed = null, writableClosed = null;
+  let connected = false, ready = false, waiting = false;
+  let inflight = null, ackTimer = null, readyTimer = null;
+  const queue = [];
+
+  function enqueue(cmd, opts = {}) {
+    if (!connected) { setStatus("Connect the Arduino first", "err"); return false; }
+    if (opts.key) {
+      const pending = queue.find(q => q.key === opts.key);
+      if (pending) { pending.cmd = cmd; return true; }   // coalesce slider spam
+    }
+    queue.push({ cmd, ...opts });
+    pump();
+    return true;
+  }
+
+  function sendJoint(i) { enqueue(`M ${i} ${pulses[i]}`, { key: "M" + i }); }
+
+  async function pump() {
+    if (!connected || !ready || waiting || !queue.length) return;
+    const item = queue.shift();
+    waiting = true;
+    inflight = item;
+    if (item.step) { playingStep = item.step; renderSeq(); }
+    const isRun = /^(P|[123])$/.test(item.cmd);
+    setStatus(isRun ? "Running sequence…" : "Moving…", "busy");
+    try {
+      await writer.write(item.cmd + "\n");
+      log("> " + item.cmd);
+    } catch (e) {
+      log("! write failed: " + e.message);
+      done();
+      return;
+    }
+    ackTimer = setTimeout(() => { log("! no reply, continuing"); done(); },
+      isRun ? 600000 : 20000);
+  }
+
+  function done() {
+    if (!waiting) return;
+    clearTimeout(ackTimer);
+    waiting = false;
+    inflight = null;
+    if (!queue.some(q => q.step) && playingStep) { playingStep = null; renderSeq(); }
+    if (connected) setStatus("Connected", "on");
+    pump();
+  }
+
+  const isPending = (i) => (inflight && inflight.key === "M" + i) || queue.some(q => q.key === "M" + i);
+
+  function handleLine(line) {
+    log("< " + line);
+    if (line === "READY") {
+      clearTimeout(readyTimer);
+      ready = true;
+      setStatus("Connected", "on");
+      pump();
+      return;
+    }
+    if (line === "OK") { done(); return; }
+    const m = line.match(/^\((\d+),\s*(\d+),\s*(\d+),\s*(\d+),\s*(\d+),\s*(\d+)\)$/);
+    if (m) {
+      m.slice(1).map(Number).forEach((v, i) => {
+        if (!dragging[i] && !isPending(i)) setPulseUI(i, v);
+      });
+    }
+  }
+
+  async function readLoop() {
+    let buf = "";
+    try {
+      while (true) {
+        const { value, done: finished } = await reader.read();
+        if (finished) break;
+        buf += value;
+        let idx;
+        while ((idx = buf.indexOf("\n")) >= 0) {
+          const line = buf.slice(0, idx).replace(/\r/g, "").trim();
+          buf = buf.slice(idx + 1);
+          if (line) handleLine(line);
+        }
+      }
+    } catch (e) {
+      if (connected) log("! read stopped: " + e.message);
+    } finally {
+      try { reader.releaseLock(); } catch (e) {}
+    }
+    if (connected) disconnect("Arduino disconnected");
+  }
+
+  async function connect() {
+    if (!("serial" in navigator)) {
+      setStatus("This browser can't use USB serial. Open this file in Chrome or Edge.", "err");
+      return;
+    }
+    try {
+      port = await navigator.serial.requestPort();
+      await port.open({ baudRate: 9600 });
+    } catch (e) {
+      setStatus(e.name === "NotFoundError"
+        ? "No port picked"
+        : "Couldn't open the port. Close the Arduino IDE Serial Monitor and try again.", "err");
+      port = null;
+      return;
+    }
+    const enc = new TextEncoderStream();
+    writableClosed = enc.readable.pipeTo(port.writable);
+    writer = enc.writable.getWriter();
+    const dec = new TextDecoderStream();
+    readableClosed = port.readable.pipeTo(dec.writable);
+    reader = dec.readable.getReader();
+
+    connected = true;
+    ready = false;
+    queue.length = 0;
+    $("connectBtn").textContent = "Disconnect";
+    setStatus("Waiting for the Arduino to start…", "busy");
+    readyTimer = setTimeout(() => {
+      if (connected && !ready) { ready = true; setStatus("Connected", "on"); pump(); }
+    }, 4000);
+    readLoop();
+  }
+
+  async function disconnect(reason) {
+    connected = false; ready = false; waiting = false;
+    queue.length = 0;
+    inflight = null;
+    playingStep = null; renderSeq();
+    clearTimeout(ackTimer); clearTimeout(readyTimer);
+    try { await reader.cancel(); } catch (e) {}
+    try { await readableClosed; } catch (e) {}
+    try { await writer.close(); } catch (e) {}
+    try { await writableClosed; } catch (e) {}
+    try { await port.close(); } catch (e) {}
+    port = writer = reader = null;
+    $("connectBtn").textContent = "Connect Arduino";
+    setStatus(reason || "Not connected", reason ? "err" : "");
+  }
+
+  $("connectBtn").addEventListener("click", () => connected ? disconnect() : connect());
+  if ("serial" in navigator) {
+    navigator.serial.addEventListener("disconnect", (e) => {
+      if (port && e.target === port) disconnect("Arduino unplugged");
+    });
+  } else {
+    setStatus("Open this file in Chrome or Edge to connect", "err");
+  }
+
+  // ---------------- Sequence ----------------
+  const stepCmd = (st) => st.type === "grip"
+    ? `M 5 ${st.v} ${SPEED[st.speed]}`
+    : `G ${st.p.join(" ")} ${SPEED[st.speed]}`;
+
+  function goToStep(st, playing) {
+    if (st.type === "grip") setPulseUI(5, st.v);
+    return enqueue(stepCmd(st), playing ? { step: st } : {});
+  }
+
+  function changed() { sortSeq(); persist(); renderSeq(); renderCode(); }
+
+  function insertStep(group, st) {
+    st.group = group;
+    let at;
+    if (selectedStep && selectedStep.group === group && seq.includes(selectedStep)) {
+      at = seq.indexOf(selectedStep) + 1;
+    } else {
+      at = 0;
+      seq.forEach((x, i) => { if (x.group <= group) at = i + 1; });
+    }
+    seq.splice(at, 0, st);
+    selectedStep = st;
+    changed();
+  }
+
+  function copyFromPrevious(g) {
+    const prev = seq.filter(x => x.group === g - 1);
+    if (!prev.length) { setStatus(`Block ${g - 1} has no steps to copy`, "err"); return; }
+    if (seq.some(x => x.group === g) &&
+        !confirm(`Block ${g} already has steps. Add a copy of block ${g - 1}'s steps after them?`)) return;
+    const re = new RegExp(`block\\s*${g - 1}`, "gi");
+    const copies = prev.map(x => ({
+      ...x,
+      p: x.p ? x.p.slice() : undefined,
+      group: g,
+      name: (x.name || "").replace(re, `block ${g}`),
+    }));
+    let at = 0;
+    seq.forEach((x, i) => { if (x.group <= g) at = i + 1; });
+    seq.splice(at, 0, ...copies);
+    selectedStep = copies[copies.length - 1];
+    changed();
+  }
+
+  $("clearSeq").addEventListener("click", () => {
+    if (!seq.length || !confirm("Delete every step in every section?")) return;
+    seq = []; selectedStep = null; changed();
+  });
+
+  function stepRow(st) {
+    const n = seq.indexOf(st) + 1;
+    const li = document.createElement("li");
+    li.className = "step" + (st === selectedStep ? " sel" : "") + (st === playingStep ? " playing" : "");
+    li.innerHTML = `
+      <span class="idx">${n}</span>
+      <input class="name" aria-label="Step ${n} name" placeholder="${st.type === "grip" ? "e.g. close on block" : "e.g. above block"}">
+      <div class="row-actions">
+        <button class="btn sm" data-a="go">Go</button>
+        <button class="btn outline sm" data-a="update" title="Replace with the arm's current position">Update</button>
+        <button class="icon" data-a="up" aria-label="Move step up">↑</button>
+        <button class="icon" data-a="down" aria-label="Move step down">↓</button>
+        <button class="icon del" data-a="del" aria-label="Delete step">✕</button>
+      </div>
+      <div class="meta">
+        <span class="tag ${st.type === "grip" ? "grip" : ""}">${st.type === "grip" ? "Gripper" : "Arm"}</span>
+        <span class="vals">${st.type === "grip" ? "CH5 " + st.v : "(" + st.p.join(", ") + ")"}</span>
+        <span class="speed" role="group" aria-label="Speed">
+          <button data-speed="normal" aria-pressed="${st.speed === "normal"}">Normal</button>
+          <button data-speed="slow" aria-pressed="${st.speed === "slow"}">Slow</button>
+        </span>
+        <select aria-label="Section">${GROUPS.map(g =>
+          `<option value="${g.id}" ${g.id === st.group ? "selected" : ""}>${g.title}</option>`).join("")}</select>
+      </div>`;
+
+    const nameInput = li.querySelector("input.name");
+    nameInput.value = st.name || "";
+    nameInput.addEventListener("input", () => { st.name = nameInput.value; persist(); renderCode(); });
+    nameInput.addEventListener("click", (e) => e.stopPropagation());
+
+    const sel = li.querySelector("select");
+    sel.addEventListener("click", (e) => e.stopPropagation());
+    sel.addEventListener("change", () => {
+      seq.splice(seq.indexOf(st), 1);
+      selectedStep = null;
+      insertStep(+sel.value, st);
+    });
+
+    li.addEventListener("click", () => { selectedStep = st; renderSeq(); });
+    li.querySelectorAll("[data-speed]").forEach(b => b.addEventListener("click", (e) => {
+      e.stopPropagation(); st.speed = b.dataset.speed; selectedStep = st; changed();
+    }));
+    li.querySelectorAll("[data-a]").forEach(b => b.addEventListener("click", (e) => {
+      e.stopPropagation();
+      selectedStep = st;
+      const a = b.dataset.a;
+      const i = seq.indexOf(st);
+      if (a === "go") { goToStep(st, false); renderSeq(); return; }
+      if (a === "update") {
+        if (st.type === "grip") st.v = pulses[5]; else st.p = pulses.slice(0, 5);
+      } else if (a === "up" && i > 0 && seq[i - 1].group === st.group) {
+        [seq[i - 1], seq[i]] = [seq[i], seq[i - 1]];
+      } else if (a === "down" && i < seq.length - 1 && seq[i + 1].group === st.group) {
+        [seq[i + 1], seq[i]] = [seq[i], seq[i + 1]];
+      } else if (a === "del") {
+        seq.splice(i, 1); selectedStep = null;
+      }
+      changed();
+    }));
+    return li;
+  }
+
+  function renderSeq() {
+    const wrap = $("groups");
+    wrap.innerHTML = "";
+    GROUPS.forEach(g => {
+      const steps = seq.filter(x => x.group === g.id);
+      const box = document.createElement("div");
+      box.className = "group" + (g.block ? " block" : "");
+      box.innerHTML = `
+        <div class="group-head">
+          <h3>${g.title}</h3>
+          <span class="count">${steps.length} step${steps.length === 1 ? "" : "s"}</span>
+          <span class="spacer"></span>
+          <button class="btn sm" data-g="arm">Record arm</button>
+          <button class="btn outline sm" data-g="grip">Record gripper</button>
+          ${g.block && g.id > 1 ? `<button class="btn outline sm" data-g="copy">Copy block ${g.id - 1}</button>` : ""}
+          <button class="btn outline sm" data-g="preview" ${steps.length ? "" : "disabled"}>Preview</button>
+        </div>
+        <p class="group-hint">${g.hint}</p>`;
+      box.querySelector('[data-g="arm"]').addEventListener("click", () =>
+        insertStep(g.id, { type: "arm", p: pulses.slice(0, 5), speed: "normal", name: "" }));
+      box.querySelector('[data-g="grip"]').addEventListener("click", () =>
+        insertStep(g.id, { type: "grip", v: pulses[5], speed: "normal", name: "" }));
+      const copyBtn = box.querySelector('[data-g="copy"]');
+      if (copyBtn) copyBtn.addEventListener("click", () => copyFromPrevious(g.id));
+      box.querySelector('[data-g="preview"]').addEventListener("click", () => {
+        if (!connected) { setStatus("Connect the Arduino first", "err"); return; }
+        steps.forEach(st => goToStep(st, true));
+      });
+
+      if (steps.length) {
+        const ol = document.createElement("ol");
+        steps.forEach(st => ol.appendChild(stepRow(st)));
+        box.appendChild(ol);
+      } else {
+        const e = document.createElement("div");
+        e.className = "empty-g";
+        e.textContent = "No steps yet.";
+        box.appendChild(e);
+      }
+      wrap.appendChild(box);
+    });
+  }
+
+  // ---------------- Play ----------------
+  $("previewBtn").addEventListener("click", () => {
+    if (!seq.length) { setStatus("Record some steps first", "err"); return; }
+    if (!connected) { setStatus("Connect the Arduino first", "err"); return; }
+    seq.forEach(st => goToStep(st, true));
+  });
+  $("runBtn").addEventListener("click", () => enqueue("P"));
+  document.querySelectorAll("[data-run]").forEach(b =>
+    b.addEventListener("click", () => enqueue(b.dataset.run)));
+  $("stopBtn").addEventListener("click", async () => {
+    queue.length = 0;
+    if (connected && inflight && /^(P|[123])$/.test(inflight.cmd)) {
+      try { await writer.write("X\n"); log("> X"); } catch (e) {}
+    }
+    playingStep = null;
+    renderSeq();
+  });
+
+  // ---------------- Code generation ----------------
+  function renderCode() {
+    const clean = (t) => (t || "").replace(/[\r\n]+/g, " ").replace(/\*\//g, "").trim();
+    const lines = [];
+    const total = seq.length;
+    GROUPS.forEach(g => {
+      const steps = seq.filter(x => x.group === g.id);
+      if (!steps.length) return;
+      lines.push(`  // ---------- ${g.title} ----------`);
+      steps.forEach(st => {
+        const n = seq.indexOf(st) + 1;
+        const d = SPEED[st.speed];
+        const body = st.type === "grip"
+          ? `{${g.id}, 1, ${st.v}, 0, 0, 0, 0, ${d}}`
+          : `{${g.id}, 0, ${st.p.join(", ")}, ${d}}`;
+        const note = clean(st.name) || (st.type === "grip" ? "gripper" : "arm");
+        lines.push(`  ${body}${n < total ? "," : " "}   // ${n} ${note}${st.speed === "slow" ? " (slow)" : ""}`);
+      });
+    });
+    if (!lines.length) lines.push(`  {0, 0, 375, 375, 375, 375, 375, 15}    // 1 home`);
+    $("code").value =
+`// ===== SEQUENCE START (replace this block with the GUI's code) =====
+// section: 0 = start, 1-3 = block 1-3, 4 = finish
+// arm step     : {section, 0, CH0, CH1, CH2, CH3, CH4, stepDelay}
+// gripper step : {section, 1, CH5, 0, 0, 0, 0, stepDelay}
+// stepDelay = ms per 2-pulse step (15 normal, 40 slow)
+const int SEQ[][8] = {
+${lines.join("\n")}
+};
+// ===== SEQUENCE END =====`;
+  }
+
+  $("copyBtn").addEventListener("click", async () => {
+    const text = $("code").value;
+    try { await navigator.clipboard.writeText(text); }
+    catch (e) { $("code").select(); document.execCommand("copy"); }
+    $("copied").hidden = false;
+    setTimeout(() => { $("copied").hidden = true; }, 1500);
+  });
+
+  renderSeq();
+  renderCode();
+})();
+</script>
+</body>
+</html>
