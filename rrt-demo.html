@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Rapidly Exploring Random Tree (RRT) and RRT* — web conversion</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&display=swap" rel="stylesheet">
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);
+  --bg:#eef1f4;--panel:#ffffff;--ink:#1d2430;--muted:#5d6878;--line:#c9d1db;--accent:#2f5d8a;
+  --obst:#0000ff;--field:#fbfcfd;--node:#d22b2b;--edge:#1d2430;--path:#e38b00;--sample:#1f9d55;--near:#2364d2;--goal:#2f5d8a;}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#151a21;--panel:#1e252e;--ink:#e6ebf1;--muted:#9aa6b4;--line:#34404d;--accent:#7fb0e0;
+  --obst:#3a5bff;--field:#11161c;--node:#ff5a5a;--edge:#cfd6de;--path:#ffb02e;--sample:#3ed17f;--near:#5b95ff;--goal:#7fb0e0;}}
+:root[data-theme="dark"]{--bg:#151a21;--panel:#1e252e;--ink:#e6ebf1;--muted:#9aa6b4;--line:#34404d;--accent:#7fb0e0;
+  --obst:#3a5bff;--field:#11161c;--node:#ff5a5a;--edge:#cfd6de;--path:#ffb02e;--sample:#3ed17f;--near:#5b95ff;--goal:#7fb0e0;}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font-family:"Atkinson Hyperlegible",system-ui,-apple-system,"Segoe UI",sans-serif;font-size:16px;line-height:1.45}
+main{max-width:1080px;margin:0 auto;padding:20px 16px 40px}
+h1{font-size:1.5rem;margin:0 0 4px;font-weight:700}
+.sub{color:var(--muted);margin:0 0 18px;max-width:70ch}
+.layout{display:grid;grid-template-columns:300px 1fr;gap:18px;align-items:start}
+@media (max-width:780px){.layout{grid-template-columns:1fr}}
+.controls{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px}
+.group{margin-bottom:16px}
+.group:last-child{margin-bottom:0}
+.lbl{display:block;font-weight:700;margin-bottom:6px;font-size:.95rem}
+.seg{display:flex;flex-wrap:wrap;gap:4px}
+.seg button,.btn{font:inherit;font-size:.9rem;padding:6px 10px;border:1px solid var(--line);background:var(--field);color:var(--ink);border-radius:5px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--accent);color:var(--panel);border-color:var(--accent)}
+.seg button:focus-visible,.btn:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+select{font:inherit;width:100%;padding:6px;border:1px solid var(--line);border-radius:5px;background:var(--field);color:var(--ink)}
+.row{display:flex;align-items:center;gap:10px}
+.row input[type=range]{flex:1}
+.val{min-width:3.2em;text-align:right;font-variant-numeric:tabular-nums}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px}
+canvas{display:block;width:100%;aspect-ratio:1/1;touch-action:none;background:var(--field);border-radius:4px;cursor:crosshair}
+.stats{display:flex;flex-wrap:wrap;gap:6px 22px;margin-top:10px;font-size:.95rem;font-variant-numeric:tabular-nums}
+.stats b{font-weight:700}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;margin-top:8px;color:var(--muted);font-size:.85rem}
+.sw{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px;vertical-align:-1px}
+.msg{margin-top:8px;color:var(--muted);font-size:.9rem;min-height:1.3em}
+</style>
+</head>
+<body>
+<main>
+  <h1>Rapidly Exploring Random Tree (RRT) and RRT*</h1>
+  <p class="sub">Compare a random tree, an RRT, and RRT*. Add nodes with the buttons, then drag the goal to search for a path from the start.</p>
+  <div class="layout">
+    <section class="controls" aria-label="Controls">
+      <div class="group">
+        <span class="lbl" id="tt">Tree type</span>
+        <div class="seg" role="group" aria-labelledby="tt" id="treeType">
+          <button data-v="RT" aria-pressed="false">Random Tree</button>
+          <button data-v="RRT" aria-pressed="true">RRT</button>
+          <button data-v="RRTSTAR" aria-pressed="false">RRT*</button>
+        </div>
+      </div>
+      <div class="group">
+        <label class="lbl" for="obst">Obstacle type</label>
+        <select id="obst">
+          <option value="none">none</option>
+          <option value="narrow" selected>narrow passage</option>
+          <option value="bugtrap">bug trap</option>
+          <option value="clutter">cluttered</option>
+        </select>
+      </div>
+      <div class="group">
+        <span class="lbl" id="na">Number of nodes to add</span>
+        <div class="seg" role="group" aria-labelledby="na" id="addBtns">
+          <button data-n="1">1</button><button data-n="10">10</button><button data-n="100">100</button><button data-n="200">200</button><button data-n="500">500</button>
+        </div>
+      </div>
+      <div class="group">
+        <label class="lbl" for="bias">Exploration bias toward goal</label>
+        <div class="row"><input type="range" id="bias" min="0" max="1" step="0.01" value="0"><span class="val" id="biasV">0</span></div>
+      </div>
+      <div class="group">
+        <label class="lbl" for="grad">Goal radius</label>
+        <div class="row"><input type="range" id="grad" min="0.2" max="3" step="0.1" value="1"><span class="val" id="gradV">1</span></div>
+      </div>
+      <div class="group"><button class="btn" id="reset">Clear tree</button></div>
+    </section>
+    <section class="stage" aria-label="Workspace">
+      <canvas id="cv" aria-label="Workspace with tree, obstacles, start and draggable goal"></canvas>
+      <div class="stats">
+        <span>Nodes: <b id="sN">1</b></span>
+        <span>Path: <b id="sP">not found</b></span>
+        <span>Path length: <b id="sL">–</b></span>
+      </div>
+      <div class="legend">
+        <span><i class="sw" style="background:var(--node)"></i>tree node</span>
+        <span><i class="sw" style="background:var(--sample)"></i>last sample</span>
+        <span><i class="sw" style="background:var(--near)"></i>nearest node</span>
+        <span><i class="sw" style="background:var(--path)"></i>path to goal</span>
+      </div>
+      <div class="msg" id="msg"></div>
+    </section>
+  </div>
+</main>
+<script>
+(function(){
+  const W = 20;                 // world is [0,W] x [0,W]
+  const STEP = 0.6;             // extension length
+  const START = {x:10, y:10};
+  let goal = {x:18.56, y:1.42};
+  let treeType = "RRT";
+  let obstacles = [];
+  let nodes = [];               // {x,y,parent,cost,children:[]}
+  let lastSample = null, lastNear = null;
+
+  const OBST = {
+    none: [],
+    narrow: [
+      // outer border walls
+      {x:0,y:0,w:20,h:0.45}, {x:0,y:19.55,w:20,h:0.45}, {x:0,y:0,w:0.45,h:20}, {x:19.55,y:0,w:0.45,h:20},
+      // left interior wall, gap between y=5.70 and y=6.68
+      {x:7.14,y:0,w:0.48,h:5.70}, {x:7.14,y:6.68,w:0.48,h:13.32},
+      // right interior wall, gap between y=12.40 and y=14.78
+      {x:12.38,y:0,w:0.48,h:12.40}, {x:12.38,y:14.78,w:0.48,h:5.22}
+    ],
+    bugtrap: [ {x:12,y:12,w:6,h:0.8}, {x:12,y:17.2,w:6,h:0.8}, {x:17.2,y:12,w:0.8,h:6} ],
+    clutter: [ {x:3,y:4,w:3,h:2}, {x:8,y:2,w:2,h:6}, {x:13,y:5,w:4,h:2}, {x:4,y:11,w:2,h:5},
+               {x:9,y:12,w:5,h:2}, {x:15,y:10,w:2,h:5}, {x:11,y:16,w:2,h:3} ]
+  };
+
+  const cv = document.getElementById("cv"), ctx = cv.getContext("2d");
+  const $ = id => document.getElementById(id);
+
+  function css(v){ return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
+  function dist(a,b){ return Math.hypot(a.x-b.x, a.y-b.y); }
+  function inObstacle(p){
+    if (p.x<0||p.y<0||p.x>W||p.y>W) return true;
+    for (const r of obstacles) if (p.x>=r.x && p.x<=r.x+r.w && p.y>=r.y && p.y<=r.y+r.h) return true;
+    return false;
+  }
+  function segFree(a,b){
+    const d = dist(a,b), n = Math.max(2, Math.ceil(d/0.05));
+    for (let i=0;i<=n;i++){ const t=i/n; if (inObstacle({x:a.x+(b.x-a.x)*t, y:a.y+(b.y-a.y)*t})) return false; }
+    return true;
+  }
+  function nearest(p){
+    let best=null, bd=Infinity;
+    for (const n of nodes){ const d=dist(n,p); if (d<bd){bd=d;best=n;} }
+    return best;
+  }
+  function steer(from,to){
+    const d = dist(from,to);
+    if (d<=STEP) return {x:to.x,y:to.y};
+    return {x: from.x+(to.x-from.x)*STEP/d, y: from.y+(to.y-from.y)*STEP/d};
+  }
+  function addNode(p,parent){
+    const n = {x:p.x,y:p.y,parent,cost: parent? parent.cost+dist(parent,p):0,children:[]};
+    if (parent) parent.children.push(n);
+    nodes.push(n); return n;
+  }
+  function propagate(n, delta){
+    for (const c of n.children){ c.cost += delta; propagate(c, delta); }
+  }
+  function reset(){
+    nodes = []; addNode(START,null); lastSample=null; lastNear=null; update();
+  }
+
+  function sample(){
+    const bias = parseFloat($("bias").value);
+    if (Math.random() < bias) return {x:goal.x,y:goal.y};
+    return {x:Math.random()*W, y:Math.random()*W};
+  }
+
+  function stepRT(){
+    // pick a random tree node, extend in a random direction
+    const n = nodes[Math.floor(Math.random()*nodes.length)];
+    const th = Math.random()*2*Math.PI;
+    const p = {x:n.x+STEP*Math.cos(th), y:n.y+STEP*Math.sin(th)};
+    lastSample = p; lastNear = n;
+    if (!inObstacle(p) && segFree(n,p)) addNode(p,n);
+  }
+  function stepRRT(){
+    const s = sample(); const near = nearest(s);
+    lastSample = s; lastNear = near;
+    const p = steer(near,s);
+    if (!inObstacle(p) && segFree(near,p)) addNode(p,near);
+  }
+  function stepRRTStar(){
+    const s = sample(); const near = nearest(s);
+    lastSample = s; lastNear = near;
+    const p = steer(near,s);
+    if (inObstacle(p) || !segFree(near,p)) return;
+    const N = nodes.length+1;
+    const r = Math.max(STEP*1.5, Math.min(8*Math.sqrt(Math.log(N)/N)*W/4, 3));
+    const nbrs = nodes.filter(n => dist(n,p) <= r);
+    // choose best parent
+    let bestP = near, bestC = near.cost + dist(near,p);
+    for (const n of nbrs){
+      const c = n.cost + dist(n,p);
+      if (c < bestC && segFree(n,p)){ bestC=c; bestP=n; }
+    }
+    const nn = addNode(p,bestP);
+    // rewire
+    for (const n of nbrs){
+      if (n===bestP) continue;
+      const c = nn.cost + dist(nn,n);
+      if (c < n.cost - 1e-9 && segFree(nn,n)){
+        const old = n.parent;
+        if (old) old.children = old.children.filter(k=>k!==n);
+        const delta = c - n.cost;
+        n.parent = nn; n.cost = c; nn.children.push(n);
+        propagate(n, delta);
+      }
+    }
+  }
+
+  function grow(k){
+    if (inObstacle(goal) && treeType!=="RT") { /* sampling still works; goal bias would just fail */ }
+    for (let i=0;i<k;i++){
+      if (treeType==="RT") stepRT();
+      else if (treeType==="RRT") stepRRT();
+      else stepRRTStar();
+    }
+    update();
+  }
+
+  function bestGoalNode(){
+    const gr = parseFloat($("grad").value);
+    let best=null;
+    for (const n of nodes) if (dist(n,goal)<=gr && (!best || n.cost<best.cost)) best=n;
+    return best;
+  }
+
+  // ---------- drawing ----------
+  let size = 600, dpr = 1;
+  function resize(){
+    const rect = cv.getBoundingClientRect();
+    dpr = window.devicePixelRatio||1; size = rect.width;
+    cv.width = Math.round(size*dpr); cv.height = Math.round(size*dpr);
+    draw();
+  }
+  const sx = x => x/W*size;
+  const sy = y => size - y/W*size;
+  function draw(){
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    ctx.clearRect(0,0,size,size);
+    ctx.fillStyle = css("--obst");
+    for (const r of obstacles) ctx.fillRect(sx(r.x), sy(r.y+r.h), r.w/W*size, r.h/W*size);
+
+    ctx.strokeStyle = css("--edge"); ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (const n of nodes) if (n.parent){ ctx.moveTo(sx(n.parent.x),sy(n.parent.y)); ctx.lineTo(sx(n.x),sy(n.y)); }
+    ctx.stroke();
+
+    ctx.fillStyle = css("--node");
+    const nr = nodes.length>800 ? 1.5 : 2.5;
+    for (const n of nodes){ ctx.beginPath(); ctx.arc(sx(n.x),sy(n.y),nr,0,2*Math.PI); ctx.fill(); }
+
+    const g = bestGoalNode();
+    if (g){
+      ctx.strokeStyle = css("--path"); ctx.lineWidth = 4; ctx.lineJoin="round";
+      ctx.beginPath(); let n=g; ctx.moveTo(sx(n.x),sy(n.y));
+      while(n.parent){ n=n.parent; ctx.lineTo(sx(n.x),sy(n.y)); }
+      ctx.stroke();
+    }
+
+    if (lastSample && treeType!=="RT"){
+      ctx.fillStyle = css("--sample"); ctx.beginPath(); ctx.arc(sx(lastSample.x),sy(lastSample.y),5,0,2*Math.PI); ctx.fill();
+    }
+    if (lastNear){
+      ctx.fillStyle = css("--near"); ctx.beginPath(); ctx.arc(sx(lastNear.x),sy(lastNear.y),5,0,2*Math.PI); ctx.fill();
+    }
+
+    // start
+    ctx.fillStyle = css("--ink"); ctx.beginPath(); ctx.arc(sx(START.x),sy(START.y),6,0,2*Math.PI); ctx.fill();
+    // goal locator + radius
+    const gr = parseFloat($("grad").value);
+    ctx.strokeStyle = css("--goal"); ctx.lineWidth = 2; ctx.setLineDash([5,4]);
+    ctx.beginPath(); ctx.arc(sx(goal.x),sy(goal.y),gr/W*size,0,2*Math.PI); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = "#ffef3a"; ctx.beginPath(); ctx.arc(sx(goal.x),sy(goal.y),11,0,2*Math.PI); ctx.fill();
+    ctx.strokeStyle = "#1d2430";
+    ctx.beginPath(); ctx.arc(sx(goal.x),sy(goal.y),7,0,2*Math.PI); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(sx(goal.x)-11,sy(goal.y)); ctx.lineTo(sx(goal.x)+11,sy(goal.y));
+    ctx.moveTo(sx(goal.x),sy(goal.y)-11); ctx.lineTo(sx(goal.x),sy(goal.y)+11); ctx.stroke();
+  }
+
+  function update(){
+    const g = bestGoalNode();
+    $("sN").textContent = nodes.length;
+    $("sP").textContent = g ? "found" : "not found";
+    $("sL").textContent = g ? g.cost.toFixed(2) : "–";
+    $("msg").textContent = inObstacle(goal) ? "The goal is inside an obstacle. Drag it to free space." : "";
+    draw();
+  }
+
+  // ---------- events ----------
+  document.querySelectorAll("#treeType button").forEach(b=>b.addEventListener("click",()=>{
+    document.querySelectorAll("#treeType button").forEach(x=>x.setAttribute("aria-pressed","false"));
+    b.setAttribute("aria-pressed","true"); treeType=b.dataset.v; reset();
+  }));
+  $("obst").addEventListener("change",e=>{ obstacles=OBST[e.target.value]; reset(); });
+  document.querySelectorAll("#addBtns button").forEach(b=>b.addEventListener("click",()=>grow(parseInt(b.dataset.n))));
+  $("bias").addEventListener("input",e=>{ $("biasV").textContent=e.target.value; });
+  $("grad").addEventListener("input",e=>{ $("gradV").textContent=e.target.value; update(); });
+  $("reset").addEventListener("click",reset);
+
+  let dragging=false;
+  function toWorld(ev){
+    const r = cv.getBoundingClientRect();
+    return {x:(ev.clientX-r.left)/r.width*W, y:W-(ev.clientY-r.top)/r.height*W};
+  }
+  cv.addEventListener("pointerdown",ev=>{
+    const p = toWorld(ev);
+    if (dist(p,goal) < 1.2){ dragging=true; cv.setPointerCapture(ev.pointerId); }
+  });
+  cv.addEventListener("pointermove",ev=>{
+    if (!dragging) return;
+    const p = toWorld(ev);
+    goal = {x:Math.min(W,Math.max(0,p.x)), y:Math.min(W,Math.max(0,p.y))};
+    update();
+  });
+  cv.addEventListener("pointerup",()=>{dragging=false;});
+  window.addEventListener("resize",resize);
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change",draw);
+
+  obstacles = OBST.narrow;
+  reset(); resize();
+})();
+</script>
+</body>
+</html>
